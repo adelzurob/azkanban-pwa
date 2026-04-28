@@ -10,8 +10,11 @@
 // Bump this whenever the precache list changes OR when shipped JS/HTML/CSS
 // changes substantively. The activate handler deletes any cache that doesn't
 // match this name, forcing fresh fetches for everything in the precache list.
-const CACHE_VERSION = "azkanban-pwa-v5";
-const PRECACHE_URLS = [
+const CACHE_VERSION = "azkanban-pwa-v6";
+
+// Required URLs — install fails atomically if any of these can't be cached.
+// Keep this list to assets we KNOW exist on the deployed origin.
+const REQUIRED_PRECACHE = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
@@ -24,14 +27,29 @@ const PRECACHE_URLS = [
   "./src/mutations.js",
   "./src/ui/board.js",
   "./src/ui/card.js",
+];
+
+// Optional URLs — best-effort cached, missing entries don't block install.
+// (Icons are listed here so the install doesn't fail before the user has
+// produced real PNGs from icons/source.svg.)
+const OPTIONAL_PRECACHE = [
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/icon-512-maskable.png",
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(PRECACHE_URLS))
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_VERSION);
+    // Required: addAll for atomic guarantee — if any of these 404, install fails.
+    await cache.addAll(REQUIRED_PRECACHE);
+    // Optional: add() each individually so a single 404 doesn't break install.
+    await Promise.all(OPTIONAL_PRECACHE.map((url) =>
+      cache.add(url).catch((err) => {
+        console.warn(`Optional precache miss for ${url}:`, err.message || err);
+      })
+    ));
+  })());
   self.skipWaiting();
 });
 
