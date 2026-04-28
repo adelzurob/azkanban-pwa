@@ -22,7 +22,7 @@ export const config = {
   // To find your path: open AZKanban desktop -> Settings -> Data File Path,
   // then strip the "C:\Users\<you>\OneDrive\" prefix and convert backslashes
   // to forward slashes.
-  dataFilePath: "/MC2GShare Shuttle/AZKhanbanFiles/boards.json",
+  dataFilePath: "/Pulm Schedule/AZKanbanFiles/boards.json",
 
   // OneDrive scopes the PWA needs. Files.ReadWrite is the minimum for read+write
   // access to user-owned files. offline_access lets MSAL silently refresh tokens
