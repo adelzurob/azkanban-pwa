@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="AZKanban" />
+    <meta name="theme-color" content="#1a1b26" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <link rel="stylesheet" href="./styles/app.css" />
+    <title>AZKanban</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <h1 class="app-title">AZKanban</h1>
+        <div class="header-right">
+          <span id="sync-indicator" class="sync-indicator" title="Sync status">●</span>
+          <button id="signout-btn" class="icon-btn" hidden>Sign out</button>
+        </div>
+      </header>
+
+      <main id="main">
+        <section id="signin-screen" class="screen">
+          <div class="signin-card">
+            <h2>Sign in</h2>
+            <p>Sign in with your Microsoft account to read and write your Kanban boards.</p>
+            <button id="signin-btn" class="primary-btn">Sign in with Microsoft</button>
+            <p id="signin-error" class="error-text" hidden></p>
+            <details class="setup-hint">
+              <summary>First time? Configuration required.</summary>
+              <p>
+                Copy <code>src/config.template.js</code> to <code>src/config.js</code> and
+                fill in your Azure app registration's client ID. See
+                <a href="./README.md" rel="noopener">README</a> for details.
+              </p>
+            </details>
+          </div>
+        </section>
+
+        <section id="boards-screen" class="screen" hidden>
+          <div id="boards-list" class="boards-list">
+            <p class="empty-state">Loading boards…</p>
+          </div>
+        </section>
+
+        <section id="error-screen" class="screen" hidden>
+          <div class="error-card">
+            <h2>Something went wrong</h2>
+            <p id="error-message" class="error-text"></p>
+            <button id="retry-btn" class="primary-btn">Retry</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- MSAL.js v3.30.0 from jsDelivr, pinned with SRI hash.
+         (Microsoft's alcdn.msauth.net path turned out to be unreliable; jsDelivr
+         mirrors @azure/msal-browser and is more dependable.) To upgrade: bump
+         the version below and regenerate the integrity hash with:
+           curl -sL https://cdn.jsdelivr.net/npm/@azure/msal-browser@<VER>/lib/msal-browser.min.js \
+             | openssl dgst -sha384 -binary | openssl base64 -A -->
+    <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.30.0/lib/msal-browser.min.js"
+            integrity="sha384-YnOjsoOxSYo65h1BXWnSq24bFbqW8HfzMWSEQxYEMRmjW9Vl1J3HZI3iZxqNYvIi"
+            crossorigin="anonymous"></script>
+    <script type="module" src="./src/app.js"></script>
+    <script>
+      // Register the service worker after the page loads — but only if the
+      // browser supports it AND we're served over https or localhost.
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("./service-worker.js")
+            .catch((err) => console.warn("SW registration failed:", err));
+        });
+      }
+    </script>
+  </body>
+</html>

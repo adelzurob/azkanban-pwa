@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signing you in…</title>
+    <link rel="stylesheet" href="./styles/app.css" />
+  </head>
+  <body class="redirect-page">
+    <div id="redirect-root" class="redirect-card">
+      <p id="redirect-status">Signing you in… this page closes automatically.</p>
+    </div>
+
+    <!-- This page is the OAuth redirect target. MSAL parses the URL fragment
+         and relays the result back to the main app via the BroadcastChannel /
+         message channel that handleRedirectPromise sets up. -->
+    <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.30.0/lib/msal-browser.min.js"
+            integrity="sha384-YnOjsoOxSYo65h1BXWnSq24bFbqW8HfzMWSEQxYEMRmjW9Vl1J3HZI3iZxqNYvIi"
+            crossorigin="anonymous"></script>
+    <script type="module">
+      import { config } from "./src/config.js";
+
+      function renderError(err) {
+        const root = document.getElementById("redirect-root");
+        // Clear children safely without innerHTML.
+        while (root.firstChild) root.removeChild(root.firstChild);
+        root.classList.add("error-card");
+
+        const heading = document.createElement("h2");
+        heading.textContent = "Sign-in failed";
+        root.appendChild(heading);
+
+        const message = document.createElement("p");
+        // textContent is XSS-safe even if err.message contains HTML/script.
+        message.textContent = (err && err.message) ? err.message : "Unknown error";
+        root.appendChild(message);
+
+        const back = document.createElement("p");
+        const link = document.createElement("a");
+        link.href = "./index.html";
+        link.textContent = "Return to app";
+        back.appendChild(link);
+        root.appendChild(back);
+      }
+
+      const pca = new msal.PublicClientApplication({
+        auth: {
+          clientId: config.clientId,
+          authority: "https://login.microsoftonline.com/consumers",
+          redirectUri: config.redirectUri,
+        },
+        cache: { cacheLocation: "sessionStorage" },
+      });
+
+      pca.initialize().then(() =>
+        pca.handleRedirectPromise().catch(renderError)
+      ).catch(renderError);
+    </script>
+  </body>
+</html>

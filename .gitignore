@@ -1,0 +1,19 @@
+# Personal config (contains your Azure client ID)
+src/config.js
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Dependencies (none expected — this is a build-step-free static site,
+# but ignore in case future tooling adds them)
+node_modules/
+package-lock.json
+.cache/
+
+# Local data — never commit any boards data, ever.
+*.boards.json
+boards.json
+boards.backup.*.json
