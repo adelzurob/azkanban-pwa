@@ -10,7 +10,7 @@
 // Bump this whenever the precache list changes OR when shipped JS/HTML/CSS
 // changes substantively. The activate handler deletes any cache that doesn't
 // match this name, forcing fresh fetches for everything in the precache list.
-const CACHE_VERSION = "azkanban-pwa-v3";
+const CACHE_VERSION = "azkanban-pwa-v4";
 const PRECACHE_URLS = [
   "./",
   "./index.html",

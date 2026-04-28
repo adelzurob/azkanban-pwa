@@ -16,10 +16,13 @@ export const config = {
     ? "http://localhost:5173/redirect.html"
     : `${typeof window !== "undefined" ? window.location.origin : ""}/azkanban-pwa/redirect.html`,
 
-  // Path to the data file inside your OneDrive. Must match the desktop app's
-  // DEFAULT_DIRECTORY (which is %USERPROFILE%\OneDrive\AZKanban\boards.json).
-  // The leading slash is the OneDrive root.
-  dataFilePath: "/AZKanban/boards.json",
+  // Path to the data file inside your OneDrive, relative to the OneDrive root.
+  // Local equivalent: %USERPROFILE%\OneDrive\<this-path-with-backslashes>.
+  // Spaces and unicode are fine — graph.js URL-encodes path segments.
+  // To find your path: open AZKanban desktop -> Settings -> Data File Path,
+  // then strip the "C:\Users\<you>\OneDrive\" prefix and convert backslashes
+  // to forward slashes.
+  dataFilePath: "/MC2GShare Shuttle/AZKhanbanFiles/boards.json",
 
   // OneDrive scopes the PWA needs. Files.ReadWrite is the minimum for read+write
   // access to user-owned files. offline_access lets MSAL silently refresh tokens

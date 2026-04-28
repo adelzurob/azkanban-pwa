@@ -10,12 +10,18 @@ import { config } from "./config.js";
 
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 
-// Build the Graph API path for the configured data file. The desktop default
-// is /AZKanban/boards.json under the OneDrive root.
+// URL-encode each path segment but leave the slashes intact. Required because
+// dataFilePath may contain spaces or other reserved characters that would
+// confuse the Graph API path parser if sent raw.
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+// Build the Graph API path for the configured data file.
 function fileItemUrl(suffix = "") {
   // /me/drive/root:/<path>:<suffix> — the colon separates the path from the
   // operation. e.g. /me/drive/root:/AZKanban/boards.json:/content for content.
-  return `${GRAPH_ROOT}/me/drive/root:${config.dataFilePath}${suffix}`;
+  return `${GRAPH_ROOT}/me/drive/root:${encodePath(config.dataFilePath)}${suffix}`;
 }
 
 // Custom error thrown when a PUT fails the eTag precondition. The caller is

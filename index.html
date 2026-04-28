@@ -80,7 +80,15 @@
     <script>
       // Register the service worker after the page loads — but only if the
       // browser supports it AND we're served over https or localhost.
+      // When a new SW takes control (after a deploy), reload the page once
+      // so the user picks up the freshly cached JS/CSS instead of stale code.
       if ("serviceWorker" in navigator) {
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          if (refreshing) return;
+          refreshing = true;
+          window.location.reload();
+        });
         window.addEventListener("load", () => {
           navigator.serviceWorker
             .register("./service-worker.js")
