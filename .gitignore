@@ -1,5 +1,8 @@
-# Personal config (contains your Azure client ID)
-src/config.js
+# Note: src/config.js is intentionally NOT gitignored.
+# Its only "secret" is the Azure OAuth client ID, which per the OAuth 2.0 SPA
+# spec is a public identifier — security comes from the registered redirect URI
+# list in Azure, not from hiding the client ID. The PWA needs config.js at
+# runtime, so it must be served from GitHub Pages.
 
 # Editor / OS
 .DS_Store
