@@ -3,10 +3,34 @@
 // Optimized for phone: columns are stacked sections rather than horizontal
 // scroll. Tap a card to open its detail view. Tap "+ Add card" to insert.
 // No drag-and-drop — moves are done from the card detail screen.
+//
+// Tag filter: a row of chips above the columns lists every tag in the board.
+// Tapping a chip toggles it on/off; cards are shown only if they carry at
+// least one selected tag (OR semantics). Selection is kept per-board for
+// the lifetime of the page so the filter survives re-renders triggered by
+// edits.
 
-import { findBoard } from "../mutations.js";
+import { findBoard, collectBoardTags } from "../mutations.js";
 
 const PRIORITY_LABELS = ["", "Low", "Med", "High"];
+
+// Per-board tag filter state: boardId -> Set<lowercased tag>. Lives only in
+// memory; resets when the user closes the PWA. Lower-casing the keys lets
+// us treat "Urgent" and "urgent" as the same filter regardless of source.
+const tagFilters = new Map();
+
+function getFilter(boardId) {
+  if (!tagFilters.has(boardId)) tagFilters.set(boardId, new Set());
+  return tagFilters.get(boardId);
+}
+
+function cardMatchesFilter(card, filterSet) {
+  if (filterSet.size === 0) return true;
+  for (const t of card.tags || []) {
+    if (filterSet.has(String(t).toLowerCase())) return true;
+  }
+  return false;
+}
 
 function emptyChildren(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
@@ -50,8 +74,22 @@ export function renderBoardDetail(root, headerEl, data, boardId, handlers) {
     el("h2", { className: "screen-title" }, board.name || "Untitled")
   ));
 
+  // Tag filter row (only if the board has any tags at all). Re-renders the
+  // body inline when a chip is toggled — no need to round-trip through the
+  // global app dispatcher because filter state isn't part of the data model.
+  const filter = getFilter(boardId);
+  const tags = collectBoardTags(data, boardId);
+  if (tags.length > 0) {
+    root.appendChild(renderTagFilterRow(boardId, tags, filter, () => {
+      // Hot-reload everything below the header without re-running auth/fetch.
+      renderBoardDetail(root, headerEl, data, boardId, handlers);
+    }));
+  }
+
   for (const column of board.columns || []) {
-    const activeCards = (column.cards || []).filter((c) => !c.archived);
+    const activeCards = (column.cards || []).filter(
+      (c) => !c.archived && cardMatchesFilter(c, filter)
+    );
 
     const colSection = el("section", { className: "column-section" });
 
@@ -64,7 +102,10 @@ export function renderBoardDetail(root, headerEl, data, boardId, handlers) {
     ));
 
     if (activeCards.length === 0) {
-      colSection.appendChild(el("p", { className: "column-empty" }, "No cards"));
+      const msg = filter.size > 0
+        ? "No cards match the current tag filter"
+        : "No cards";
+      colSection.appendChild(el("p", { className: "column-empty" }, msg));
     } else {
       for (const card of activeCards) {
         colSection.appendChild(renderCardItem(card, handlers));
@@ -78,6 +119,42 @@ export function renderBoardDetail(root, headerEl, data, boardId, handlers) {
 
     root.appendChild(colSection);
   }
+}
+
+function renderTagFilterRow(boardId, tags, filter, rerender) {
+  const wrap = el("div", { className: "tag-filter-row" });
+
+  const label = el("span", { className: "tag-filter-label" },
+    filter.size > 0 ? `Filtering: ${filter.size} tag${filter.size === 1 ? "" : "s"}` : "Filter by tag");
+  wrap.appendChild(label);
+
+  const chipBox = el("div", { className: "tag-filter-chips" });
+  for (const tag of tags) {
+    const lower = String(tag).toLowerCase();
+    const active = filter.has(lower);
+    chipBox.appendChild(el("button", {
+      type: "button",
+      className: "tag-chip" + (active ? " tag-chip-active" : ""),
+      onClick: () => {
+        if (active) filter.delete(lower); else filter.add(lower);
+        rerender();
+      },
+    }, "#" + tag));
+  }
+  wrap.appendChild(chipBox);
+
+  if (filter.size > 0) {
+    wrap.appendChild(el("button", {
+      type: "button",
+      className: "tag-filter-clear",
+      onClick: () => {
+        filter.clear();
+        rerender();
+      },
+    }, "Clear"));
+  }
+
+  return wrap;
 }
 
 function renderCardItem(card, handlers) {

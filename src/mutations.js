@@ -158,6 +158,111 @@ export function updateSubtaskTitle(data, cardId, subtaskId, title) {
   return subtask;
 }
 
+export function addTag(data, cardId, tag) {
+  const found = findCard(data, cardId);
+  if (!found) return false;
+  const clean = (tag || "").trim();
+  if (!clean) return false;
+  if (!Array.isArray(found.card.tags)) found.card.tags = [];
+  // Dedupe case-insensitively but preserve user's original casing.
+  const lower = clean.toLowerCase();
+  if (found.card.tags.some((t) => String(t).toLowerCase() === lower)) return false;
+  found.card.tags.push(clean);
+  return true;
+}
+
+export function removeTag(data, cardId, tag) {
+  const found = findCard(data, cardId);
+  if (!found) return false;
+  const tags = found.card.tags || [];
+  const lower = String(tag).toLowerCase();
+  const idx = tags.findIndex((t) => String(t).toLowerCase() === lower);
+  if (idx < 0) return false;
+  tags.splice(idx, 1);
+  return true;
+}
+
+/**
+ * Collect every distinct tag used on any non-archived card in a board.
+ * Returned tags preserve the casing of their first occurrence and are sorted
+ * alphabetically (case-insensitive) for stable display order.
+ */
+export function collectBoardTags(data, boardId) {
+  const board = findBoard(data, boardId);
+  if (!board) return [];
+  const seen = new Map(); // lower -> original
+  for (const col of board.columns || []) {
+    for (const card of col.cards || []) {
+      if (card.archived) continue;
+      for (const tag of card.tags || []) {
+        const lower = String(tag).toLowerCase();
+        if (!seen.has(lower)) seen.set(lower, tag);
+      }
+    }
+  }
+  return [...seen.values()].sort((a, b) =>
+    String(a).toLowerCase().localeCompare(String(b).toLowerCase())
+  );
+}
+
+/**
+ * Walk every board and return the archived cards as
+ * {card, column, board} triples, sorted newest-first by archived_at.
+ */
+export function listArchivedCards(data) {
+  const out = [];
+  if (!data || !Array.isArray(data.boards)) return out;
+  for (const board of data.boards) {
+    for (const column of board.columns || []) {
+      for (const card of column.cards || []) {
+        if (card.archived) out.push({ card, column, board });
+      }
+    }
+  }
+  out.sort((a, b) => {
+    const ta = Date.parse(a.card.archived_at || "") || 0;
+    const tb = Date.parse(b.card.archived_at || "") || 0;
+    return tb - ta;
+  });
+  return out;
+}
+
+/**
+ * Substring search across every non-archived card in every board. Matches
+ * title, description, tags, and subtask titles, case-insensitively. Returns
+ * up to `limit` {card, column, board} triples.
+ */
+export function searchCards(data, query, limit = 100) {
+  if (!data || !Array.isArray(data.boards)) return [];
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return [];
+  const out = [];
+  for (const board of data.boards) {
+    for (const column of board.columns || []) {
+      for (const card of column.cards || []) {
+        if (card.archived) continue;
+        if (cardMatches(card, q)) {
+          out.push({ card, column, board });
+          if (out.length >= limit) return out;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function cardMatches(card, qLower) {
+  if ((card.title || "").toLowerCase().includes(qLower)) return true;
+  if ((card.description || "").toLowerCase().includes(qLower)) return true;
+  for (const tag of card.tags || []) {
+    if (String(tag).toLowerCase().includes(qLower)) return true;
+  }
+  for (const sub of card.subtasks || []) {
+    if ((sub.title || "").toLowerCase().includes(qLower)) return true;
+  }
+  return false;
+}
+
 export function stampLastModified(data) {
   data.last_modified = nowIso();
   data.last_modified_by = "iPhone PWA";

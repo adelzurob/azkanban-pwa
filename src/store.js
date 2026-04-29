@@ -6,9 +6,12 @@
 // returns.
 
 const DB_NAME = "azkanban-pwa";
-const DB_VERSION = 1;
+// Bump on schema change. v2: queue store changed from per-edit rows
+// (keyPath "queuedAt") to a single-row "pending" snapshot (keyPath "id"),
+// because for a single user we only ever need the latest unsaved snapshot.
+const DB_VERSION = 2;
 const STORE_SNAPSHOT = "snapshot";   // single-row: the last fetched data + eTag
-const STORE_QUEUE = "edit_queue";    // queued edits to replay when online
+const STORE_QUEUE = "edit_queue";    // single-row "pending": data + baseETag
 
 let dbPromise = null;
 
@@ -16,13 +19,19 @@ function openDb() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (evt) => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_SNAPSHOT)) {
         db.createObjectStore(STORE_SNAPSHOT, { keyPath: "id" });
       }
+      // v1 -> v2: drop the old per-edit queue store and recreate with the
+      // simpler single-row schema. Any half-applied old queued edits are
+      // discarded (acceptable — no v1 ever shipped a working offline path).
+      if (evt.oldVersion < 2 && db.objectStoreNames.contains(STORE_QUEUE)) {
+        db.deleteObjectStore(STORE_QUEUE);
+      }
       if (!db.objectStoreNames.contains(STORE_QUEUE)) {
-        db.createObjectStore(STORE_QUEUE, { keyPath: "queuedAt" });
+        db.createObjectStore(STORE_QUEUE, { keyPath: "id" });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -55,44 +64,62 @@ export async function loadSnapshot() {
   });
 }
 
-/** Queue an offline edit (full snapshot replacement) for replay. */
-export async function queueEdit(data, baseETag) {
-  const store = await tx(STORE_QUEUE, "readwrite");
+/**
+ * Save the current pending (offline-unsaved) snapshot. baseETag is the eTag
+ * the file had the last time we successfully read or wrote — we'll send it
+ * as If-Match when we replay. If an entry already exists, the existing
+ * baseETag is preserved so subsequent offline edits don't accidentally
+ * overwrite the conflict-detection anchor.
+ */
+export async function queuePending(data, baseETag) {
+  const db = await openDb();
   return new Promise((resolve, reject) => {
-    const req = store.put({ queuedAt: Date.now(), data, baseETag });
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
+    const t = db.transaction(STORE_QUEUE, "readwrite");
+    const store = t.objectStore(STORE_QUEUE);
+    const getReq = store.get("pending");
+    getReq.onsuccess = () => {
+      const existing = getReq.result;
+      const finalBase = existing && existing.baseETag !== undefined
+        ? existing.baseETag
+        : baseETag;
+      const putReq = store.put({
+        id: "pending",
+        data,
+        baseETag: finalBase,
+        queuedAt: existing ? existing.queuedAt : Date.now(),
+        updatedAt: Date.now(),
+      });
+      putReq.onsuccess = () => resolve();
+      putReq.onerror = () => reject(putReq.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
   });
 }
 
-/** List queued edits in chronological order. */
-export async function listQueuedEdits() {
+/** Load the pending unsaved snapshot, or null if nothing is queued. */
+export async function loadPending() {
   const store = await tx(STORE_QUEUE, "readonly");
   return new Promise((resolve, reject) => {
-    const req = store.getAll();
-    req.onsuccess = () => resolve(req.result || []);
+    const req = store.get("pending");
+    req.onsuccess = () => resolve(req.result || null);
     req.onerror = () => reject(req.error);
   });
 }
 
-/** Remove a queued edit by its queuedAt key. */
-export async function removeQueuedEdit(queuedAt) {
+/** Drop the pending snapshot — call after a successful save or a discard. */
+export async function clearPending() {
   const store = await tx(STORE_QUEUE, "readwrite");
   return new Promise((resolve, reject) => {
-    const req = store.delete(queuedAt);
+    const req = store.delete("pending");
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
 }
 
-/** Clear all queued edits — used after a successful conflict-discard. */
-export async function clearQueue() {
-  const store = await tx(STORE_QUEUE, "readwrite");
-  return new Promise((resolve, reject) => {
-    const req = store.clear();
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
+/** Quick boolean check used by the UI for "pending sync" badging. */
+export async function hasPending() {
+  const p = await loadPending();
+  return !!p;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

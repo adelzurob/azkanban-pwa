@@ -23,6 +23,8 @@
         </div>
       </header>
 
+      <div id="offline-banner" class="offline-banner" hidden></div>
+
       <main id="main">
         <section id="signin-screen" class="screen">
           <div class="signin-card">
@@ -42,6 +44,16 @@
         </section>
 
         <section id="boards-screen" class="screen" hidden>
+          <div id="boards-toolbar" class="boards-toolbar">
+            <button id="search-open-btn" class="toolbar-btn" type="button">
+              <span class="toolbar-icon">🔍</span>
+              <span>Search</span>
+            </button>
+            <button id="archive-open-btn" class="toolbar-btn" type="button">
+              <span class="toolbar-icon">🗄</span>
+              <span>Archive</span>
+            </button>
+          </div>
           <div id="boards-list" class="boards-list">
             <p class="empty-state">Loading boards…</p>
           </div>
@@ -55,6 +67,16 @@
         <section id="card-detail-screen" class="screen" hidden>
           <div id="card-detail-header" class="screen-header"></div>
           <div id="card-detail-root" class="card-detail-root"></div>
+        </section>
+
+        <section id="archive-screen" class="screen" hidden>
+          <div id="archive-header" class="screen-header"></div>
+          <div id="archive-root" class="archive-root"></div>
+        </section>
+
+        <section id="search-screen" class="screen" hidden>
+          <div id="search-header" class="screen-header"></div>
+          <div id="search-root" class="search-root"></div>
         </section>
 
         <section id="error-screen" class="screen" hidden>

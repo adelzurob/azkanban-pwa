@@ -20,3 +20,7 @@ package-lock.json
 *.boards.json
 boards.json
 boards.backup.*.json
+
+# Local source-file backups (per project rules, kept locally before edits).
+# No reason to ship them through GitHub Pages.
+backups/

@@ -132,15 +132,62 @@ export function renderCardDetail(root, headerEl, data, cardId, handlers) {
   }
   root.appendChild(columnSelect);
 
-  // ---- Tags (read-only display in v1) ----
-  if (card.tags && card.tags.length > 0) {
-    root.appendChild(fieldLabel("Tags"));
-    const tagRow = el("div", { className: "chip-row" });
-    for (const tag of card.tags) {
-      tagRow.appendChild(el("span", { className: "chip chip-tag" }, tag));
+  // ---- Tags (editable: add via input, remove by tapping × on the chip) ----
+  root.appendChild(fieldLabel("Tags"));
+  const tagSection = el("div", { className: "tag-edit-section" });
+
+  const tagRow = el("div", { className: "chip-row" });
+  const tags = card.tags || [];
+  if (tags.length === 0) {
+    tagRow.appendChild(el("span", { className: "tag-empty" }, "No tags yet."));
+  } else {
+    for (const tag of tags) {
+      const chip = el("span", { className: "chip chip-tag chip-tag-removable" });
+      chip.appendChild(document.createTextNode(tag));
+      chip.appendChild(el("button", {
+        type: "button",
+        className: "chip-remove",
+        "aria-label": `Remove tag ${tag}`,
+        onClick: () => handlers.removeTag(tag),
+      }, "×"));
+      tagRow.appendChild(chip);
     }
-    root.appendChild(tagRow);
   }
+  tagSection.appendChild(tagRow);
+
+  const addRow = el("div", { className: "tag-add-row" });
+  const tagInput = el("input", {
+    type: "text",
+    className: "field-input",
+    placeholder: "Add tag…",
+    autocapitalize: "none",
+    spellcheck: false,
+    onKeydown: (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const v = tagInput.value.trim();
+        if (v) {
+          handlers.addTag(v);
+          tagInput.value = "";
+        }
+      }
+    },
+  });
+  addRow.appendChild(tagInput);
+  addRow.appendChild(el("button", {
+    type: "button",
+    className: "primary-btn-small",
+    onClick: () => {
+      const v = tagInput.value.trim();
+      if (v) {
+        handlers.addTag(v);
+        tagInput.value = "";
+      }
+    },
+  }, "Add"));
+  tagSection.appendChild(addRow);
+
+  root.appendChild(tagSection);
 
   // ---- Subtasks ----
   root.appendChild(fieldLabel("Subtasks"));

@@ -10,7 +10,7 @@
 // Bump this whenever the precache list changes OR when shipped JS/HTML/CSS
 // changes substantively. The activate handler deletes any cache that doesn't
 // match this name, forcing fresh fetches for everything in the precache list.
-const CACHE_VERSION = "azkanban-pwa-v6";
+const CACHE_VERSION = "azkanban-pwa-v7";
 
 // Required URLs — install fails atomically if any of these can't be cached.
 // Keep this list to assets we KNOW exist on the deployed origin.
@@ -27,6 +27,8 @@ const REQUIRED_PRECACHE = [
   "./src/mutations.js",
   "./src/ui/board.js",
   "./src/ui/card.js",
+  "./src/ui/archive.js",
+  "./src/ui/search.js",
 ];
 
 // Optional URLs — best-effort cached, missing entries don't block install.

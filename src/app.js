@@ -1,9 +1,10 @@
 // AZKanban PWA — entry point.
 //
-// Handles bootstrap (auth + initial fetch), navigation between three views
-// (boards list / board detail / card detail), debounced writes back to
-// OneDrive via Graph with eTag-based optimistic concurrency, conflict
-// recovery, and offline cache fallback.
+// Handles bootstrap (auth + initial fetch), navigation between five views
+// (boards list / board detail / card detail / archive / search), debounced
+// writes back to OneDrive via Graph with eTag-based optimistic concurrency,
+// conflict recovery, offline edit queue with replay-on-reconnect, and
+// cache-first cold-start rendering from IndexedDB.
 
 import { initAuth, signIn, signOut, getActiveAccount } from "./auth.js";
 import {
@@ -11,15 +12,18 @@ import {
 } from "./graph.js";
 import {
   persistSnapshot, loadSnapshot, setState, getState, subscribe,
+  queuePending, loadPending, clearPending,
 } from "./store.js";
 import { config } from "./config.js";
 import {
   archiveCard, unarchiveCard, deleteCard, addCard, moveCard,
   updateCardFields, toggleSubtask, addSubtask, deleteSubtask,
-  updateSubtaskTitle, stampLastModified,
+  updateSubtaskTitle, stampLastModified, addTag, removeTag,
 } from "./mutations.js";
 import { renderBoardDetail } from "./ui/board.js";
 import { renderCardDetail } from "./ui/card.js";
+import { renderArchive } from "./ui/archive.js";
+import { renderSearch } from "./ui/search.js";
 
 // ---------------------------------------------------------------------------
 // DOM references — gathered once at module load.
@@ -30,6 +34,8 @@ const els = {
   boardsScreen:        document.getElementById("boards-screen"),
   boardDetailScreen:   document.getElementById("board-detail-screen"),
   cardDetailScreen:    document.getElementById("card-detail-screen"),
+  archiveScreen:       document.getElementById("archive-screen"),
+  searchScreen:        document.getElementById("search-screen"),
   errorScreen:         document.getElementById("error-screen"),
   signinBtn:           document.getElementById("signin-btn"),
   signinError:         document.getElementById("signin-error"),
@@ -37,12 +43,20 @@ const els = {
   retryBtn:            document.getElementById("retry-btn"),
   errorMessage:        document.getElementById("error-message"),
   boardsList:          document.getElementById("boards-list"),
+  boardsToolbar:       document.getElementById("boards-toolbar"),
+  searchOpenBtn:       document.getElementById("search-open-btn"),
+  archiveOpenBtn:      document.getElementById("archive-open-btn"),
   boardDetailHeader:   document.getElementById("board-detail-header"),
   boardDetailRoot:     document.getElementById("board-detail-root"),
   cardDetailHeader:    document.getElementById("card-detail-header"),
   cardDetailRoot:      document.getElementById("card-detail-root"),
+  archiveHeader:       document.getElementById("archive-header"),
+  archiveRoot:         document.getElementById("archive-root"),
+  searchHeader:        document.getElementById("search-header"),
+  searchRoot:          document.getElementById("search-root"),
   syncIndicator:       document.getElementById("sync-indicator"),
   backBtn:             document.getElementById("back-btn"),
+  offlineBanner:       document.getElementById("offline-banner"),
 };
 
 // ---------------------------------------------------------------------------
@@ -52,13 +66,22 @@ const els = {
 // view = { name: "list" }
 //      | { name: "board", boardId: "..." }
 //      | { name: "card",  cardId: "...", boardId: "..." }
+//      | { name: "archive" }
+//      | { name: "search" }
 let view = { name: "list" };
+
+// Where to send the user when they tap Back from a card detail screen.
+// Cards can be reached from a board view, the archive view, or search;
+// remembering the source keeps Back natural.
+let cardOrigin = "board"; // "board" | "archive" | "search"
 
 const ALL_SCREENS = [
   els.signinScreen,
   els.boardsScreen,
   els.boardDetailScreen,
   els.cardDetailScreen,
+  els.archiveScreen,
+  els.searchScreen,
   els.errorScreen,
 ];
 
@@ -67,8 +90,14 @@ function showScreen(target) {
 }
 
 function updateBackButton() {
-  // Back button only meaningful on board/card detail screens.
-  els.backBtn.hidden = !(view.name === "board" || view.name === "card");
+  // Back button is meaningful on every screen except the boards list and the
+  // sign-in/error screens.
+  els.backBtn.hidden = !(
+    view.name === "board" ||
+    view.name === "card" ||
+    view.name === "archive" ||
+    view.name === "search"
+  );
 }
 
 function navigateToBoard(boardId) {
@@ -83,18 +112,34 @@ function navigateToCard(cardId, boardId) {
   renderCurrentView();
 }
 
-function navigateBack() {
-  if (view.name === "card") {
-    view = { name: "board", boardId: view.boardId };
-  } else if (view.name === "board") {
-    view = { name: "list" };
-  }
+function navigateToArchive() {
+  view = { name: "archive" };
+  cardOrigin = "archive";
   updateBackButton();
   renderCurrentView();
 }
 
-function navigateToList() {
-  view = { name: "list" };
+function navigateToSearch() {
+  view = { name: "search" };
+  cardOrigin = "search";
+  updateBackButton();
+  renderCurrentView();
+}
+
+function navigateBack() {
+  if (view.name === "card") {
+    if (cardOrigin === "archive") {
+      view = { name: "archive" };
+    } else if (cardOrigin === "search") {
+      view = { name: "search" };
+    } else {
+      view = { name: "board", boardId: view.boardId };
+    }
+  } else if (view.name === "board") {
+    view = { name: "list" };
+  } else if (view.name === "archive" || view.name === "search") {
+    view = { name: "list" };
+  }
   updateBackButton();
   renderCurrentView();
 }
@@ -105,6 +150,12 @@ function navigateToList() {
 
 function setSyncStatus(status) {
   els.syncIndicator.dataset.status = status;
+  // Fire-and-forget: the banner reflects the queue + onLine state, both of
+  // which may have changed by the time the indicator does. Cheap enough to
+  // re-evaluate on every status flip.
+  if (status === "synced" || status === "pending" || status === "offline") {
+    refreshOfflineBanner();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +183,12 @@ function renderCurrentView() {
   } else if (view.name === "card") {
     renderCardDetail(els.cardDetailRoot, els.cardDetailHeader, data, view.cardId, cardHandlers);
     showScreen(els.cardDetailScreen);
+  } else if (view.name === "archive") {
+    renderArchive(els.archiveRoot, els.archiveHeader, data, archiveHandlers);
+    showScreen(els.archiveScreen);
+  } else if (view.name === "search") {
+    renderSearch(els.searchRoot, els.searchHeader, data, searchHandlers);
+    showScreen(els.searchScreen);
   }
 }
 
@@ -199,12 +256,31 @@ function commitEdit(mutator) {
   stampLastModified(data);
   // Trigger subscribers so the UI re-renders immediately.
   setState(data, eTag);
+  // Snapshot to IndexedDB optimistically (fire-and-forget) so the latest
+  // edits survive a tab close even before the next save completes.
+  persistSnapshot(data, eTag).catch((err) =>
+    console.warn("Optimistic snapshot persist failed:", err)
+  );
   scheduleSave();
 }
 
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(doSave, config.saveDebounceMs);
+}
+
+// Errors that indicate "we couldn't reach the server" rather than "the server
+// rejected the request". Treat these as offline so we queue and replay later.
+function isNetworkError(err) {
+  if (!err) return false;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  // fetch() throws TypeError on DNS / connection failures.
+  if (err.name === "TypeError") return true;
+  // MSAL throws this when token refresh can't reach the auth endpoint.
+  if (err.name === "BrowserAuthError" && /network|offline/i.test(err.message || "")) {
+    return true;
+  }
+  return false;
 }
 
 async function doSave() {
@@ -217,6 +293,13 @@ async function doSave() {
   const { data, eTag } = getState();
   if (!data) return;
 
+  // Hard-offline shortcut — skip the network attempt entirely.
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    await queuePending(data, eTag);
+    setSyncStatus("pending");
+    return;
+  }
+
   saveInFlight = true;
   setSyncStatus("saving");
   try {
@@ -224,6 +307,8 @@ async function doSave() {
     // Write the same data back to state with the new eTag.
     setState(data, newETag);
     await persistSnapshot(data, newETag);
+    // A successful save means anything we'd queued is now redundant.
+    await clearPending();
     setSyncStatus("synced");
   } catch (err) {
     if (err instanceof ConflictError || err.isConflict) {
@@ -237,11 +322,22 @@ async function doSave() {
       } catch (refetchErr) {
         console.error("Refetch after conflict failed:", refetchErr);
       }
+      // Offline edits that conflicted can't be applied as-is. Drop the queue
+      // so we don't keep replaying a known-bad snapshot.
+      await clearPending();
       alert(
         "Heads up: this file was changed elsewhere (another device or the desktop) " +
         "while you were editing. Your view has been refreshed with the latest data. " +
         "If your edit didn't make it in, please re-apply it."
       );
+    } else if (isNetworkError(err)) {
+      console.warn("Save failed with network error — queueing for replay:", err);
+      try {
+        await queuePending(data, eTag);
+      } catch (qErr) {
+        console.error("Queue write failed:", qErr);
+      }
+      setSyncStatus("pending");
     } else {
       console.error("Save failed:", err);
       setSyncStatus("error");
@@ -252,13 +348,41 @@ async function doSave() {
   }
 }
 
+// Try to push any queued offline edits to OneDrive. Called on app startup
+// (after auth) and on the window's "online" event.
+async function replayPending() {
+  if (saveInFlight) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  let pending;
+  try {
+    pending = await loadPending();
+  } catch (err) {
+    console.warn("Could not read pending queue:", err);
+    return;
+  }
+  if (!pending) return;
+
+  // Use the LATEST in-memory data (which already includes any further edits
+  // the user made since the queue entry was written). The queue's baseETag
+  // is what we send as If-Match — that's the eTag the file had the last time
+  // we successfully read it, so a 412 here means someone else changed the
+  // file while we were offline.
+  const { data: currentData } = getState();
+  const dataToSave = currentData || pending.data;
+  setState(dataToSave, pending.baseETag);
+  await doSave();
+}
+
 // ---------------------------------------------------------------------------
 // View handlers — passed into board.js / card.js as the only way they
 // communicate state changes back to the app.
 // ---------------------------------------------------------------------------
 
 const boardHandlers = {
-  openCard: (cardId) => navigateToCard(cardId, view.boardId),
+  openCard: (cardId) => {
+    cardOrigin = "board";
+    navigateToCard(cardId, view.boardId);
+  },
   addCard: (columnId) => {
     const title = prompt("New card title:");
     if (!title || !title.trim()) return;
@@ -267,7 +391,10 @@ const boardHandlers = {
       const card = addCard(data, columnId, title.trim());
       if (card) newId = card.id;
     });
-    if (newId) navigateToCard(newId, view.boardId);
+    if (newId) {
+      cardOrigin = "board";
+      navigateToCard(newId, view.boardId);
+    }
   },
 };
 
@@ -302,6 +429,12 @@ const cardHandlers = {
       updateSubtaskTitle(data, view.cardId, subtaskId, title);
     });
   },
+  addTag: (tag) => {
+    commitEdit((data) => addTag(data, view.cardId, tag));
+  },
+  removeTag: (tag) => {
+    commitEdit((data) => removeTag(data, view.cardId, tag));
+  },
   archive: () => {
     commitEdit((data) => archiveCard(data, view.cardId));
     navigateBack();
@@ -313,6 +446,23 @@ const cardHandlers = {
   deleteCard: () => {
     commitEdit((data) => deleteCard(data, view.cardId));
     navigateBack();
+  },
+};
+
+// Archive + search both surface results that link out to a card. Setting
+// cardOrigin lets navigateBack send the user back to the right list rather
+// than to the parent board.
+const archiveHandlers = {
+  openCard: (cardId, boardId) => {
+    cardOrigin = "archive";
+    navigateToCard(cardId, boardId);
+  },
+};
+
+const searchHandlers = {
+  openCard: (cardId, boardId) => {
+    cardOrigin = "search";
+    navigateToCard(cardId, boardId);
   },
 };
 
@@ -391,9 +541,42 @@ async function showBoards() {
   view = { name: "list" };
   updateBackButton();
   renderCurrentView();
+  refreshOfflineBanner();
+
+  // Try to replay any queued offline edits before doing the live fetch, so
+  // the live fetch reflects our locally pending changes once they land.
+  try {
+    await replayPending();
+  } catch (err) {
+    console.warn("Initial replay attempt failed (non-fatal):", err);
+  }
 
   await loadAndRender();
   startPolling();
+}
+
+// Show a thin banner above the boards content when we're offline OR
+// when there are queued edits waiting to replay. Pure status — no actions.
+async function refreshOfflineBanner() {
+  if (!els.offlineBanner) return;
+  const isOnline = typeof navigator === "undefined" ? true : navigator.onLine;
+  let pending = false;
+  try {
+    pending = !!(await loadPending());
+  } catch {
+    /* ignore — banner is best-effort */
+  }
+  if (!isOnline) {
+    els.offlineBanner.textContent = "You're offline. Edits will sync when you reconnect.";
+    els.offlineBanner.dataset.tone = "offline";
+    els.offlineBanner.hidden = false;
+  } else if (pending) {
+    els.offlineBanner.textContent = "Edits queued — syncing…";
+    els.offlineBanner.dataset.tone = "pending";
+    els.offlineBanner.hidden = false;
+  } else {
+    els.offlineBanner.hidden = true;
+  }
 }
 
 async function bootstrap() {
@@ -426,6 +609,13 @@ async function bootstrap() {
 
 els.backBtn.addEventListener("click", () => navigateBack());
 
+if (els.searchOpenBtn) {
+  els.searchOpenBtn.addEventListener("click", () => navigateToSearch());
+}
+if (els.archiveOpenBtn) {
+  els.archiveOpenBtn.addEventListener("click", () => navigateToArchive());
+}
+
 els.signinBtn.addEventListener("click", async () => {
   els.signinError.hidden = true;
   els.signinBtn.disabled = true;
@@ -455,11 +645,26 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-window.addEventListener("offline", () => setSyncStatus("offline"));
-window.addEventListener("online", () => {
-  if (getActiveAccount()) {
-    loadAndRender().catch((err) => console.error("Refresh on reconnect failed:", err));
+window.addEventListener("offline", () => {
+  setSyncStatus("offline");
+  refreshOfflineBanner();
+});
+window.addEventListener("online", async () => {
+  refreshOfflineBanner();
+  if (!getActiveAccount()) return;
+  // Order matters: replay BEFORE pulling fresh data. Otherwise our queued
+  // edits get clobbered by whatever the server (or another device) has.
+  try {
+    await replayPending();
+  } catch (err) {
+    console.warn("Replay on reconnect failed:", err);
   }
+  try {
+    await loadAndRender();
+  } catch (err) {
+    console.error("Refresh on reconnect failed:", err);
+  }
+  refreshOfflineBanner();
 });
 
 // Flush any pending save before the user navigates away.
