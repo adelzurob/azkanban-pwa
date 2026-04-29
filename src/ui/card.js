@@ -155,7 +155,7 @@ export function renderCardDetail(root, headerEl, data, cardId, handlers) {
   }
   tagSection.appendChild(tagRow);
 
-  const addRow = el("div", { className: "tag-add-row" });
+  const tagAddRow = el("div", { className: "tag-add-row" });
   const tagInput = el("input", {
     type: "text",
     className: "field-input",
@@ -173,8 +173,8 @@ export function renderCardDetail(root, headerEl, data, cardId, handlers) {
       }
     },
   });
-  addRow.appendChild(tagInput);
-  addRow.appendChild(el("button", {
+  tagAddRow.appendChild(tagInput);
+  tagAddRow.appendChild(el("button", {
     type: "button",
     className: "primary-btn-small",
     onClick: () => {
@@ -185,7 +185,7 @@ export function renderCardDetail(root, headerEl, data, cardId, handlers) {
       }
     },
   }, "Add"));
-  tagSection.appendChild(addRow);
+  tagSection.appendChild(tagAddRow);
 
   root.appendChild(tagSection);
 
