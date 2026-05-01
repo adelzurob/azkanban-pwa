@@ -147,6 +147,18 @@ export function setState(data, eTag) {
   }
 }
 
+/**
+ * Update state WITHOUT notifying subscribers. Use this when the caller has
+ * already changed something the UI is showing (typing into an uncontrolled
+ * <input>) or when the change is bookkeeping-only (refreshing the eTag
+ * after a successful save). Re-rendering in those cases would destroy the
+ * focused input mid-keystroke and break iOS dictation.
+ */
+export function setStateSilent(data, eTag) {
+  currentData = data;
+  currentETag = eTag;
+}
+
 export function subscribe(cb) {
   subscribers.add(cb);
   return () => subscribers.delete(cb);

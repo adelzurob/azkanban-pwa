@@ -11,7 +11,7 @@ import {
   fetchBoards, fetchETag, saveBoards, ConflictError,
 } from "./graph.js";
 import {
-  persistSnapshot, loadSnapshot, setState, getState, subscribe,
+  persistSnapshot, loadSnapshot, setState, setStateSilent, getState, subscribe,
   queuePending, loadPending, clearPending,
 } from "./store.js";
 import { config } from "./config.js";
@@ -249,13 +249,16 @@ function renderBoardList(data) {
 let saveTimer = null;
 let saveInFlight = false;
 
-function commitEdit(mutator) {
+function commitEdit(mutator, { silent = false } = {}) {
   const { data, eTag } = getState();
   if (!data) return;
   mutator(data);
   stampLastModified(data);
-  // Trigger subscribers so the UI re-renders immediately.
-  setState(data, eTag);
+  // Loud commits notify subscribers and re-render the current view. Silent
+  // commits update the in-memory state but skip the re-render — used when
+  // the user is typing into an uncontrolled text input (re-rendering would
+  // destroy the focused element and break iOS dictation).
+  (silent ? setStateSilent : setState)(data, eTag);
   // Snapshot to IndexedDB optimistically (fire-and-forget) so the latest
   // edits survive a tab close even before the next save completes.
   persistSnapshot(data, eTag).catch((err) =>
@@ -304,8 +307,11 @@ async function doSave() {
   setSyncStatus("saving");
   try {
     const newETag = await saveBoards(data, eTag);
-    // Write the same data back to state with the new eTag.
-    setState(data, newETag);
+    // Write the same data back to state with the new eTag. SILENT — the
+    // eTag is bookkeeping the user can't see, and a loud re-render here
+    // (firing every save cycle, ~1s after every keystroke) would destroy
+    // any focused text input mid-typing.
+    setStateSilent(data, newETag);
     await persistSnapshot(data, newETag);
     // A successful save means anything we'd queued is now redundant.
     await clearPending();
@@ -400,9 +406,15 @@ const boardHandlers = {
 
 const cardHandlers = {
   updateField: (field, value) => {
+    // Title and description are uncontrolled text inputs — the user's
+    // typed text already lives in the DOM, so re-rendering the form would
+    // destroy focus and break iOS dictation. priority/due_date/etc. flip
+    // visible UI state (chip-active class, Clear-button visibility), so
+    // they need a loud commit to redraw.
+    const silent = field === "title" || field === "description";
     commitEdit((data) => {
       updateCardFields(data, view.cardId, { [field]: value });
-    });
+    }, { silent });
   },
   moveToColumn: (columnId) => {
     commitEdit((data) => {
@@ -502,7 +514,11 @@ let pollTimer = null;
 function startPolling() {
   stopPolling();
   pollTimer = setInterval(async () => {
-    if (document.hidden || saveInFlight) return;
+    // Skip if hidden, mid-save, OR the user has unsaved edits queued —
+    // saveTimer !== null means they typed/tapped within the last
+    // saveDebounceMs window. Polling here would `loadAndRender → setState`
+    // (loud) and rebuild the form, killing focus mid-typing.
+    if (document.hidden || saveInFlight || saveTimer !== null) return;
     try {
       const remoteETag = await fetchETag();
       const { eTag: localETag } = getState();
@@ -640,9 +656,13 @@ els.retryBtn.addEventListener("click", () => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && getActiveAccount()) {
-    loadAndRender().catch((err) => console.error("Refresh on focus failed:", err));
-  }
+  if (document.hidden) return;
+  if (!getActiveAccount()) return;
+  // Same guard as the polling loop: don't refetch / re-render if the user
+  // has unsaved edits queued. They could have backgrounded the PWA while
+  // typing, and a loud setState here would kill focus on return.
+  if (saveInFlight || saveTimer !== null) return;
+  loadAndRender().catch((err) => console.error("Refresh on focus failed:", err));
 });
 
 window.addEventListener("offline", () => {
